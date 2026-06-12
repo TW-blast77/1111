@@ -35,6 +35,37 @@ export interface ShoppingItem {
 
 const TRIPS_KEY = "jtp.trips.v1";
 const ITEMS_KEY = "jtp.items.v1";
+const GUIDES_KEY = "jtp.guides.v1";
+
+export interface GuideStore {
+  name: string;
+  address?: string;
+  area?: string;
+  mapsUrl: string;
+  embedUrl: string;
+  tip?: string;
+}
+
+export interface GuideProduct {
+  name: string;
+  price?: string;
+  store?: string;
+  note?: string;
+}
+
+export interface Guide {
+  id: string;
+  sourceUrl: string;
+  sourceHost: string;
+  title: string;
+  summary: string;
+  area: string;
+  coverImage?: string;
+  stores: GuideStore[];
+  products: GuideProduct[];
+  tips: string[];
+  createdAt: number;
+}
 
 function read<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -80,6 +111,23 @@ export const TripStore = {
   },
   removeItem(id: string) {
     write(ITEMS_KEY, this.items().filter((i) => i.id !== id));
+  },
+};
+
+export const GuideStoreDB = {
+  list(): Guide[] {
+    return read<Guide[]>(GUIDES_KEY, []);
+  },
+  get(id: string): Guide | undefined {
+    return this.list().find((g) => g.id === id);
+  },
+  upsert(g: Guide) {
+    const all = this.list().filter((x) => x.id !== g.id);
+    all.push(g);
+    write(GUIDES_KEY, all);
+  },
+  remove(id: string) {
+    write(GUIDES_KEY, this.list().filter((g) => g.id !== id));
   },
 };
 

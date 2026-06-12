@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 const links = [
+  { href: "/guides", label: "購物攻略" },
   { href: "/dashboard", label: "我的旅行" },
   { href: "/stores", label: "商店" },
   { href: "/tools/tax", label: "退稅試算" },

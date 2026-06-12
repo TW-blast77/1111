@@ -18,7 +18,7 @@ export default function StoresPage() {
     <div className="space-y-8">
       <div>
         <p className="text-sm text-ink-500">日本商店資料庫</p>
-        <h1 className="mt-1 text-3xl font-semibold tracking-tight text-ink-900">必逯日本連鎖</h1>
+        <h1 className="mt-1 text-3xl font-semibold tracking-tight text-ink-900">必逛日本連鎖</h1>
         <p className="mt-2 text-sm text-ink-500">藥妝、電器、雜貨、服飾，一次掌握。</p>
       </div>
 

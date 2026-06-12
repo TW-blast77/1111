@@ -33,7 +33,7 @@ export default function NewTrip() {
     <div className="mx-auto max-w-2xl">
       <p className="text-sm text-ink-500">建立旅行計畫</p>
       <h1 className="mt-1 text-3xl font-semibold tracking-tight text-ink-900">
-        說說你的下趡旅程
+        說說你的下趟旅程
       </h1>
 
       <form onSubmit={onSubmit} className="card mt-8 p-8 space-y-5">
