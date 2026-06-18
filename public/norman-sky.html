@@ -1,0 +1,1385 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Norman Sky - 星際無限探索</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; color: #0ff; }
+canvas { display: block; position: fixed; top: 0; left: 0; }
+#hud {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none; z-index: 10;
+}
+.hud-panel {
+  position: absolute; background: rgba(0,20,40,0.75);
+  border: 1px solid rgba(0,255,255,0.3); border-radius: 6px;
+  padding: 8px 12px; font-size: 12px; color: #7df;
+  backdrop-filter: blur(4px);
+}
+#hud-tl { top: 12px; left: 12px; min-width: 180px; }
+#hud-tr { top: 12px; right: 12px; min-width: 160px; }
+#hud-bc { bottom: 50px; left: 50%; transform: translateX(-50%);
+          text-align: center; white-space: nowrap; }
+#minimap {
+  position: absolute; bottom: 12px; right: 12px;
+  width: 140px; height: 140px;
+  border: 1px solid rgba(0,255,255,0.3);
+  border-radius: 50%; overflow: hidden;
+  background: rgba(0,10,20,0.8);
+}
+#minimap canvas { border-radius: 50%; }
+#scanner-ring {
+  position: absolute; border-radius: 50%;
+  border: 2px solid rgba(0,255,200,0.6);
+  animation: pulse 2s infinite;
+  pointer-events: none;
+}
+@keyframes pulse {
+  0%,100% { opacity: 0.8; transform: translate(-50%,-50%) scale(1); }
+  50% { opacity: 0.2; transform: translate(-50%,-50%) scale(1.15); }
+}
+#transition {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: #000; opacity: 0; pointer-events: none;
+  z-index: 100; transition: opacity 0.5s;
+}
+#prompt {
+  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,255,200,0.15); border: 1px solid rgba(0,255,200,0.5);
+  color: #0fc; padding: 8px 20px; border-radius: 20px;
+  font-size: 14px; z-index: 20; pointer-events: none;
+  animation: blink 1.2s infinite;
+  display: none;
+}
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+#controls {
+  position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+  color: rgba(0,200,255,0.4); font-size: 11px; text-align: center;
+  z-index: 20; pointer-events: none; white-space: nowrap;
+}
+.bar-bg { background: rgba(255,255,255,0.1); border-radius: 4px; height: 6px; margin: 3px 0; }
+.bar-fill { height: 6px; border-radius: 4px; transition: width 0.2s; }
+.bar-fuel .bar-fill { background: linear-gradient(90deg,#0af,#07f); }
+.bar-shield .bar-fill { background: linear-gradient(90deg,#0f8,#0a4); }
+.bar-health .bar-fill { background: linear-gradient(90deg,#f84,#f40); }
+.label { font-size: 10px; color: rgba(100,200,255,0.6); margin-bottom: 1px; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud">
+  <div class="hud-panel" id="hud-tl">
+    <div style="font-size:14px;color:#0ff;margin-bottom:6px;letter-spacing:2px">◈ NAVIGATOR</div>
+    <div class="label">座標 COORDS</div>
+    <div id="coords" style="font-size:11px;color:#aef">X: 0 &nbsp; Y: 0</div>
+    <div class="label" style="margin-top:5px">速度 SPEED</div>
+    <div id="speed" style="color:#aef">0.0 AU/s</div>
+    <div class="label" style="margin-top:5px">燃料 FUEL</div>
+    <div class="bar-bg bar-fuel"><div class="bar-fill" id="bar-fuel" style="width:100%"></div></div>
+    <div class="label" style="margin-top:4px">護盾 SHIELD</div>
+    <div class="bar-bg bar-shield"><div class="bar-fill" id="bar-shield" style="width:100%"></div></div>
+  </div>
+
+  <div class="hud-panel" id="hud-tr">
+    <div style="font-size:14px;color:#0ff;margin-bottom:6px;letter-spacing:2px">◈ SCANNER</div>
+    <div class="label">已發現 DISCOVERED</div>
+    <div id="discovered" style="color:#fa0;font-size:15px">0 行星</div>
+    <div class="label" style="margin-top:5px">附近 NEARBY</div>
+    <div id="nearby" style="color:#aef;font-size:11px">掃描中...</div>
+    <div class="label" style="margin-top:5px">狀態 STATUS</div>
+    <div id="status" style="color:#0f8;font-size:11px">探索中</div>
+  </div>
+
+  <div class="hud-panel" id="hud-bc" style="display:none">
+    <div id="planet-info" style="color:#fa0;font-size:13px">▶ 星球信息</div>
+  </div>
+</div>
+
+<div id="minimap">
+  <canvas id="minimap-canvas" width="140" height="140"></canvas>
+</div>
+
+<div id="prompt"></div>
+<div id="controls">WASD / 方向鍵 移動 &nbsp;|&nbsp; E 進入/離開星球 &nbsp;|&nbsp; 滾輪 縮放 &nbsp;|&nbsp; Shift 加速</div>
+<div id="transition"></div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const miniCanvas = document.getElementById('minimap-canvas');
+const mctx = miniCanvas.getContext('2d');
+
+let W = canvas.width = window.innerWidth;
+let H = canvas.height = window.innerHeight;
+
+// ─── Seeded PRNG ──────────────────────────────────────────────────────────
+function seededRand(seed) {
+  let s = seed;
+  return function() {
+    s = (s * 1664525 + 1013904223) & 0xffffffff;
+    return (s >>> 0) / 0xffffffff;
+  };
+}
+function hash2(x, y) {
+  return Math.abs((x * 73856093) ^ (y * 19349663)) % 2147483647;
+}
+
+// ─── Game State ──────────────────────────────────────────────────────────
+const STATE = { SPACE: 'space', PLANET: 'planet', TRANSITION: 'transition' };
+let gameState = STATE.SPACE;
+
+const cam = { x: 0, y: 0, zoom: 1 };
+const player = {
+  x: 0, y: 0, vx: 0, vy: 0,
+  angle: -Math.PI/2,
+  fuel: 100, shield: 100,
+  speed: 0,
+  onPlanet: null,
+  // planet surface
+  sx: 0, sy: 0, svx: 0, svy: 0, grounded: false
+};
+
+const keys = {};
+let discoveredPlanets = new Set();
+let nearbyPlanet = null;
+let targetPlanet = null;
+let transitionAlpha = 0;
+let planetSurface = null;
+let cameraShake = 0;
+let time = 0;
+
+// ─── Sector System ────────────────────────────────────────────────────────
+const SECTOR_SIZE = 8000;
+const sectors = new Map();
+
+function getSectorKey(sx, sy) { return `${sx},${sy}`; }
+
+function getSector(sx, sy) {
+  const key = getSectorKey(sx, sy);
+  if (!sectors.has(key)) sectors.set(key, generateSector(sx, sy));
+  return sectors.get(key);
+}
+
+function generateSector(sx, sy) {
+  const rand = seededRand(hash2(sx, sy));
+  const objects = [];
+
+  // Stars (background)
+  const starCount = 40 + Math.floor(rand() * 30);
+  for (let i = 0; i < starCount; i++) {
+    objects.push({
+      type: 'star',
+      x: sx * SECTOR_SIZE + rand() * SECTOR_SIZE,
+      y: sy * SECTOR_SIZE + rand() * SECTOR_SIZE,
+      size: 0.5 + rand() * 1.5,
+      brightness: 0.4 + rand() * 0.6,
+      color: starColor(rand)
+    });
+  }
+
+  // Nebula clouds
+  if (rand() < 0.35) {
+    const nc = 3 + Math.floor(rand() * 4);
+    const hue = Math.floor(rand() * 360);
+    for (let i = 0; i < nc; i++) {
+      objects.push({
+        type: 'nebula',
+        x: sx * SECTOR_SIZE + rand() * SECTOR_SIZE,
+        y: sy * SECTOR_SIZE + rand() * SECTOR_SIZE,
+        rx: 400 + rand() * 800,
+        ry: 300 + rand() * 600,
+        hue: hue + rand() * 40 - 20,
+        alpha: 0.04 + rand() * 0.08
+      });
+    }
+  }
+
+  // Planets
+  const planetCount = 1 + Math.floor(rand() * 4);
+  for (let i = 0; i < planetCount; i++) {
+    const px = sx * SECTOR_SIZE + 600 + rand() * (SECTOR_SIZE - 1200);
+    const py = sy * SECTOR_SIZE + 600 + rand() * (SECTOR_SIZE - 1200);
+    const seed = hash2(Math.floor(px), Math.floor(py));
+    objects.push(makePlanet(px, py, seed, rand));
+  }
+
+  // Black hole (rare)
+  if (rand() < 0.08) {
+    objects.push({
+      type: 'blackhole',
+      x: sx * SECTOR_SIZE + rand() * SECTOR_SIZE,
+      y: sy * SECTOR_SIZE + rand() * SECTOR_SIZE,
+      radius: 80 + rand() * 80,
+      diskColor: `hsl(${30 + rand()*40},100%,60%)`
+    });
+  }
+
+  // Asteroids
+  if (rand() < 0.5) {
+    const ac = 5 + Math.floor(rand() * 10);
+    const ax = sx * SECTOR_SIZE + rand() * SECTOR_SIZE;
+    const ay = sy * SECTOR_SIZE + rand() * SECTOR_SIZE;
+    for (let i = 0; i < ac; i++) {
+      objects.push({
+        type: 'asteroid',
+        x: ax + (rand()-0.5)*600,
+        y: ay + (rand()-0.5)*600,
+        size: 8 + rand() * 30,
+        rot: rand() * Math.PI * 2,
+        rotSpeed: (rand()-0.5)*0.01,
+        sides: 5 + Math.floor(rand() * 4),
+        color: `hsl(${20+rand()*20},${10+rand()*20}%,${40+rand()*20}%)`
+      });
+    }
+  }
+
+  return objects;
+}
+
+function starColor(rand) {
+  const r = rand();
+  if (r < 0.6) return '#fff';
+  if (r < 0.75) return '#adf';
+  if (r < 0.85) return '#fda';
+  if (r < 0.92) return '#faa';
+  return '#aaf';
+}
+
+const BIOMES = [
+  { name: '翠綠星球', color: '#2d8a2d', atm: 'rgba(60,200,60,0.25)', sky:'#0a2a0a', ground:'#1a5a1a', grassColor:'#3aaa3a' },
+  { name: '沙漠星球', color: '#c8882a', atm: 'rgba(200,140,50,0.3)', sky:'#2a1800', ground:'#8a5a10', grassColor:'#c8a040' },
+  { name: '冰雪星球', color: '#aae0ff', atm: 'rgba(150,220,255,0.3)', sky:'#050a20', ground:'#b0d8f8', grassColor:'#d0f0ff' },
+  { name: '熔岩星球', color: '#cc2200', atm: 'rgba(255,60,0,0.3)', sky:'#150000', ground:'#3a0800', grassColor:'#ff4400' },
+  { name: '毒素星球', color: '#88ff44', atm: 'rgba(100,255,50,0.25)', sky:'#001a00', ground:'#1a3a00', grassColor:'#88ff44' },
+  { name: '海洋星球', color: '#0088cc', atm: 'rgba(0,150,255,0.3)', sky:'#000a20', ground:'#002244', grassColor:'#00aaff' },
+  { name: '晶體星球', color: '#cc44ff', atm: 'rgba(180,60,255,0.25)', sky:'#0a0020', ground:'#1a0040', grassColor:'#cc88ff' },
+  { name: '荒蕪星球', color: '#888888', atm: 'rgba(120,120,120,0.15)', sky:'#050505', ground:'#444444', grassColor:'#666666' },
+];
+
+function makePlanet(px, py, seed, rand) {
+  const biomeIdx = Math.floor(rand() * BIOMES.length);
+  const biome = BIOMES[biomeIdx];
+  const radius = 60 + rand() * 120;
+  const hasRing = rand() < 0.3;
+  const hasMoon = rand() < 0.4;
+  const name = generatePlanetName(seed);
+  return {
+    type: 'planet',
+    x: px, y: py,
+    radius,
+    seed,
+    biomeIdx,
+    biome,
+    name,
+    hasRing,
+    ringTilt: rand() * 0.5,
+    hasMoon,
+    moonDist: radius * 2 + rand() * radius,
+    moonRadius: 8 + rand() * 20,
+    moonAngle: rand() * Math.PI * 2,
+    moonSpeed: 0.002 + rand() * 0.003,
+    cloudCount: Math.floor(rand() * 8),
+    rotSpeed: (rand() - 0.5) * 0.002
+  };
+}
+
+const syllables = ['nor','man','sky','ara','kel','zen','vox','nar','lys','tal','el','os','ix','um','an','ia','or','us','en','is'];
+function generatePlanetName(seed) {
+  const r = seededRand(seed);
+  const n = 2 + Math.floor(r() * 2);
+  let name = '';
+  for (let i = 0; i < n; i++) {
+    const s = syllables[Math.floor(r() * syllables.length)];
+    name += i === 0 ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+  }
+  return name;
+}
+
+// ─── Planet Surface Generation ─────────────────────────────────────────────
+function generatePlanetSurface(planet) {
+  const r = seededRand(planet.seed);
+  const biome = planet.biome;
+  const W_WORLD = 6000;
+  const H_WORLD = 800;
+
+  // Terrain using multiple sine waves
+  const terrain = [];
+  const layers = [
+    { amp: 120, freq: 0.003, phase: r()*Math.PI*2 },
+    { amp: 60,  freq: 0.008, phase: r()*Math.PI*2 },
+    { amp: 30,  freq: 0.02,  phase: r()*Math.PI*2 },
+    { amp: 12,  freq: 0.05,  phase: r()*Math.PI*2 },
+  ];
+  const baseY = H_WORLD * 0.6;
+  for (let x = 0; x < W_WORLD; x += 4) {
+    let y = baseY;
+    for (const l of layers) y -= l.amp * Math.sin(x * l.freq + l.phase);
+    terrain.push({ x, y });
+  }
+
+  // Trees / structures
+  const flora = [];
+  const floraCount = 40 + Math.floor(r() * 60);
+  for (let i = 0; i < floraCount; i++) {
+    const fx = r() * W_WORLD;
+    const tidx = Math.floor(fx / 4);
+    const ty = terrain[Math.min(tidx, terrain.length-1)]?.y || baseY;
+    flora.push({
+      x: fx, y: ty,
+      type: Math.floor(r() * 4),
+      size: 20 + r() * 50,
+      color: biome.grassColor,
+      color2: `hsl(${parseInt(biome.grassColor.slice(1,3),16)},${40+r()*40}%,${20+r()*20}%)`
+    });
+  }
+
+  // Caves / rocks
+  const rocks = [];
+  for (let i = 0; i < 20 + Math.floor(r() * 20); i++) {
+    const fx = r() * W_WORLD;
+    const tidx = Math.floor(fx / 4);
+    const ty = terrain[Math.min(tidx, terrain.length-1)]?.y || baseY;
+    rocks.push({ x: fx, y: ty, size: 15 + r() * 35, color: biome.ground });
+  }
+
+  // Creatures
+  const creatures = [];
+  for (let i = 0; i < 5 + Math.floor(r() * 8); i++) {
+    const fx = r() * W_WORLD;
+    const tidx = Math.floor(fx / 4);
+    const ty = terrain[Math.min(tidx, terrain.length-1)]?.y || baseY;
+    creatures.push({
+      x: fx, y: ty, vx: (r()-0.5)*1.5,
+      size: 15 + r() * 25,
+      color: `hsl(${r()*360},${50+r()*50}%,${40+r()*30}%)`,
+      legPhase: r() * Math.PI * 2,
+      type: Math.floor(r() * 3)
+    });
+  }
+
+  // Stars/sky objects in planet sky
+  const skyStars = [];
+  for (let i = 0; i < 100; i++) {
+    skyStars.push({ x: r()*W_WORLD, y: r()*H_WORLD*0.5, size: r()*2, bright: r() });
+  }
+
+  return {
+    planet, terrain, flora, rocks, creatures, skyStars,
+    W: W_WORLD, H: H_WORLD,
+    biome, groundY: baseY,
+    time: 0, gravity: 0.3
+  };
+}
+
+function getTerrainY(surface, wx) {
+  const t = surface.terrain;
+  if (!t.length) return surface.groundY;
+  const idx = Math.floor(wx / 4);
+  if (idx < 0) return t[0].y;
+  if (idx >= t.length) return t[t.length-1].y;
+  const frac = (wx % 4) / 4;
+  const y0 = t[idx].y;
+  const y1 = idx+1 < t.length ? t[idx+1].y : y0;
+  return y0 + (y1-y0)*frac;
+}
+
+// ─── Drawing ──────────────────────────────────────────────────────────────
+function drawSpace() {
+  ctx.fillStyle = '#00000a';
+  ctx.fillRect(0, 0, W, H);
+
+  const visW = W / cam.zoom;
+  const visH = H / cam.zoom;
+  const x0 = cam.x - visW/2;
+  const y0 = cam.y - visH/2;
+
+  // Parallax stars (fixed pattern)
+  for (let layer = 0; layer < 3; layer++) {
+    const parallax = 0.2 + layer * 0.3;
+    const spacing = 120 - layer * 30;
+    const startX = Math.floor((x0 * parallax) / spacing) * spacing;
+    const startY = Math.floor((y0 * parallax) / spacing) * spacing;
+    for (let px2 = startX; px2 < x0*parallax + visW; px2 += spacing) {
+      for (let py2 = startY; py2 < y0*parallax + visH; py2 += spacing) {
+        const rr = seededRand(hash2(Math.floor(px2/spacing)*73, Math.floor(py2/spacing)*37+layer*999));
+        const sx2 = px2/parallax - x0*parallax/parallax + x0;
+        const sy2 = py2/parallax - y0*parallax/parallax + y0;
+        const screenX = (sx2 - x0) * cam.zoom;
+        const screenY = (sy2 - y0) * cam.zoom;
+        if (screenX < -5 || screenX > W+5 || screenY < -5 || screenY > H+5) continue;
+        const size = (0.5 + rr() * (1 + layer)) * cam.zoom;
+        const bright = 0.3 + rr() * 0.7;
+        const twinkle = 0.7 + 0.3 * Math.sin(time * 0.05 + rr() * 10);
+        ctx.globalAlpha = bright * twinkle;
+        ctx.fillStyle = starColor(rr);
+        ctx.beginPath();
+        ctx.arc(screenX, screenY, size, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  // Get visible sectors
+  const sx0 = Math.floor(x0 / SECTOR_SIZE) - 1;
+  const sy0 = Math.floor(y0 / SECTOR_SIZE) - 1;
+  const sx1 = Math.floor((x0+visW) / SECTOR_SIZE) + 1;
+  const sy1 = Math.floor((y0+visH) / SECTOR_SIZE) + 1;
+
+  const allObjs = [];
+  for (let sx = sx0; sx <= sx1; sx++) {
+    for (let sy = sy0; sy <= sy1; sy++) {
+      allObjs.push(...getSector(sx, sy));
+    }
+  }
+
+  // Sort: nebula → star → planet/blackhole
+  allObjs.sort((a,b) => {
+    const order = {nebula:0, star:1, asteroid:2, planet:3, blackhole:4};
+    return (order[a.type]||0) - (order[b.type]||0);
+  });
+
+  for (const obj of allObjs) {
+    const sx2 = (obj.x - x0) * cam.zoom;
+    const sy2 = (obj.y - y0) * cam.zoom;
+
+    if (obj.type === 'nebula') {
+      drawNebula(obj, sx2, sy2);
+    } else if (obj.type === 'star') {
+      drawSpaceStar(obj, sx2, sy2);
+    } else if (obj.type === 'asteroid') {
+      obj.rot += obj.rotSpeed;
+      drawAsteroid(obj, sx2, sy2);
+    } else if (obj.type === 'planet') {
+      obj.moonAngle += obj.moonSpeed;
+      drawPlanet(obj, sx2, sy2);
+    } else if (obj.type === 'blackhole') {
+      drawBlackHole(obj, sx2, sy2);
+    }
+  }
+
+  // Player ship
+  drawShip(W/2, H/2, player.angle);
+}
+
+function drawNebula(obj, sx, sy) {
+  const rx = obj.rx * cam.zoom;
+  const ry = obj.ry * cam.zoom;
+  if (sx + rx < 0 || sx - rx > W || sy + ry < 0 || sy - ry > H) return;
+  const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, Math.max(rx, ry));
+  grad.addColorStop(0, `hsla(${obj.hue},80%,60%,${obj.alpha * 2})`);
+  grad.addColorStop(0.5, `hsla(${obj.hue},70%,40%,${obj.alpha})`);
+  grad.addColorStop(1, 'transparent');
+  ctx.save();
+  ctx.scale(1, ry/rx);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(sx, sy * rx/ry, rx, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawSpaceStar(obj, sx, sy) {
+  if (sx < -5 || sx > W+5 || sy < -5 || sy > H+5) return;
+  const tw = 0.8 + 0.2 * Math.sin(time * 0.03 + obj.x * 0.01);
+  ctx.globalAlpha = obj.brightness * tw;
+  ctx.fillStyle = obj.color;
+  const r = obj.size * cam.zoom;
+  ctx.beginPath();
+  ctx.arc(sx, sy, r, 0, Math.PI*2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+function drawAsteroid(obj, sx, sy) {
+  const r = obj.size * cam.zoom;
+  if (sx + r < 0 || sx - r > W || sy + r < 0 || sy - r > H) return;
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.rotate(obj.rot);
+  ctx.beginPath();
+  for (let i = 0; i < obj.sides; i++) {
+    const a = (i / obj.sides) * Math.PI * 2;
+    const jitter = 0.7 + 0.3 * Math.sin(i * 1.618);
+    const x = Math.cos(a) * r * jitter;
+    const y = Math.sin(a) * r * jitter;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = obj.color;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPlanet(obj, sx, sy) {
+  const r = obj.radius * cam.zoom;
+  if (sx + r*3 < 0 || sx - r*3 > W || sy + r*3 < 0 || sy - r*3 > H) return;
+
+  // Ring (back part)
+  if (obj.hasRing) {
+    ctx.save();
+    ctx.scale(1, obj.ringTilt + 0.1);
+    ctx.beginPath();
+    ctx.arc(sx, sy / (obj.ringTilt + 0.1), r * 2.2, 0, Math.PI, true);
+    const ringGrad = ctx.createLinearGradient(sx - r*2.2, 0, sx + r*2.2, 0);
+    ringGrad.addColorStop(0, 'transparent');
+    ringGrad.addColorStop(0.2, `${obj.biome.color}88`);
+    ringGrad.addColorStop(0.5, `${obj.biome.color}44`);
+    ringGrad.addColorStop(0.8, `${obj.biome.color}88`);
+    ringGrad.addColorStop(1, 'transparent');
+    ctx.lineWidth = r * 0.4;
+    ctx.strokeStyle = ringGrad;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Atmosphere glow
+  const atmGrad = ctx.createRadialGradient(sx, sy, r*0.9, sx, sy, r*1.5);
+  atmGrad.addColorStop(0, obj.biome.atm);
+  atmGrad.addColorStop(1, 'transparent');
+  ctx.beginPath();
+  ctx.arc(sx, sy, r * 1.5, 0, Math.PI*2);
+  ctx.fillStyle = atmGrad;
+  ctx.fill();
+
+  // Planet body
+  const bodyGrad = ctx.createRadialGradient(sx - r*0.3, sy - r*0.3, r*0.1, sx, sy, r);
+  bodyGrad.addColorStop(0, lighten(obj.biome.color, 60));
+  bodyGrad.addColorStop(0.5, obj.biome.color);
+  bodyGrad.addColorStop(1, darken(obj.biome.color, 60));
+  ctx.beginPath();
+  ctx.arc(sx, sy, r, 0, Math.PI*2);
+  ctx.fillStyle = bodyGrad;
+  ctx.fill();
+
+  // Surface details (clouds)
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(sx, sy, r, 0, Math.PI*2);
+  ctx.clip();
+  const cloudOff = (time * obj.rotSpeed * cam.zoom * 30) % (r * 2);
+  for (let i = 0; i < obj.cloudCount; i++) {
+    const rr = seededRand(obj.seed + i * 100);
+    const cx2 = sx - r + (rr() * r * 2 + cloudOff) % (r*2);
+    const cy2 = sy - r*0.6 + rr() * r * 1.2;
+    const cr = r * 0.2 + rr() * r * 0.25;
+    ctx.globalAlpha = 0.15 + rr() * 0.15;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.ellipse(cx2, cy2, cr, cr*0.5, 0, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Shadow
+  ctx.globalAlpha = 0.55;
+  const shadowGrad = ctx.createRadialGradient(sx + r*0.5, sy, 0, sx + r*0.5, sy, r*1.5);
+  shadowGrad.addColorStop(0, 'rgba(0,0,20,0.8)');
+  shadowGrad.addColorStop(0.5, 'rgba(0,0,20,0.4)');
+  shadowGrad.addColorStop(1, 'transparent');
+  ctx.fillStyle = shadowGrad;
+  ctx.beginPath();
+  ctx.arc(sx, sy, r, 0, Math.PI*2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // Ring (front part)
+  if (obj.hasRing) {
+    ctx.save();
+    ctx.scale(1, obj.ringTilt + 0.1);
+    ctx.beginPath();
+    ctx.arc(sx, sy / (obj.ringTilt + 0.1), r * 2.2, 0, Math.PI, false);
+    const ringGrad2 = ctx.createLinearGradient(sx - r*2.2, 0, sx + r*2.2, 0);
+    ringGrad2.addColorStop(0, 'transparent');
+    ringGrad2.addColorStop(0.2, `${obj.biome.color}88`);
+    ringGrad2.addColorStop(0.5, `${obj.biome.color}44`);
+    ringGrad2.addColorStop(0.8, `${obj.biome.color}88`);
+    ringGrad2.addColorStop(1, 'transparent');
+    ctx.lineWidth = r * 0.4;
+    ctx.strokeStyle = ringGrad2;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Moon
+  if (obj.hasMoon) {
+    const mx = sx + Math.cos(obj.moonAngle) * obj.moonDist * cam.zoom;
+    const my = sy + Math.sin(obj.moonAngle) * obj.moonDist * cam.zoom * 0.4;
+    const mr = obj.moonRadius * cam.zoom;
+    const mg = ctx.createRadialGradient(mx-mr*0.3, my-mr*0.3, 0, mx, my, mr);
+    mg.addColorStop(0, '#ccc');
+    mg.addColorStop(1, '#555');
+    ctx.beginPath();
+    ctx.arc(mx, my, mr, 0, Math.PI*2);
+    ctx.fillStyle = mg;
+    ctx.fill();
+  }
+
+  // Name label
+  if (r > 20) {
+    ctx.font = `${Math.min(r * 0.3, 14)}px Courier New`;
+    ctx.textAlign = 'center';
+    const discovered = discoveredPlanets.has(obj.seed);
+    ctx.fillStyle = discovered ? '#fa0' : 'rgba(200,240,255,0.6)';
+    ctx.fillText(discovered ? obj.name : '???', sx, sy + r + 16);
+  }
+
+  // Landing range indicator
+  const dist = Math.hypot(player.x - obj.x, player.y - obj.y);
+  const landingRange = obj.radius * 1.8;
+  if (dist < landingRange * 2 && dist > obj.radius) {
+    ctx.beginPath();
+    ctx.arc(sx, sy, (landingRange * cam.zoom), 0, Math.PI*2);
+    ctx.strokeStyle = `rgba(0,255,200,${0.3 + 0.2*Math.sin(time*0.1)})`;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5,5]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function drawBlackHole(obj, sx, sy) {
+  const r = obj.radius * cam.zoom;
+  if (sx + r*4 < 0 || sx - r*4 > W || sy + r*4 < 0 || sy - r*4 > H) return;
+
+  // Distortion ring
+  for (let i = 3; i > 0; i--) {
+    ctx.beginPath();
+    ctx.arc(sx, sy, r * (1 + i*0.6), 0, Math.PI*2);
+    ctx.strokeStyle = `rgba(255,200,100,${0.05*i})`;
+    ctx.lineWidth = r * 0.3 * i;
+    ctx.stroke();
+  }
+
+  // Accretion disk
+  ctx.save();
+  ctx.scale(1, 0.25);
+  const t = time * 0.02;
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    ctx.arc(sx, sy*4, r * (1.3 + i*0.15), t + i, t + Math.PI + i);
+    ctx.strokeStyle = `hsl(${30+i*15},100%,${60-i*10}%)`;
+    ctx.lineWidth = r * (0.12 - i*0.02);
+    ctx.globalAlpha = 0.8 - i*0.15;
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // Event horizon
+  const bhGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, r);
+  bhGrad.addColorStop(0, '#000');
+  bhGrad.addColorStop(0.7, '#000');
+  bhGrad.addColorStop(0.85, 'rgba(30,0,60,0.8)');
+  bhGrad.addColorStop(1, 'transparent');
+  ctx.beginPath();
+  ctx.arc(sx, sy, r, 0, Math.PI*2);
+  ctx.fillStyle = bhGrad;
+  ctx.fill();
+
+  // Gravitational lensing effect (distorted stars ring)
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(sx, sy, r*1.2, 0, Math.PI*2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+
+  // Label
+  ctx.font = '13px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#f80';
+  ctx.fillText('⬤ 黑洞', sx, sy + r + 18);
+}
+
+function drawShip(sx, sy, angle) {
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.rotate(angle + Math.PI/2);
+
+  // Engine glow
+  const thrusting = keys['ArrowUp'] || keys['w'] || keys['W'] || keys['ArrowDown'] || keys['s'] || keys['S'];
+  if (thrusting) {
+    const eg = ctx.createRadialGradient(0, 18, 0, 0, 18, 20);
+    eg.addColorStop(0, 'rgba(0,200,255,0.9)');
+    eg.addColorStop(0.5, 'rgba(0,100,255,0.5)');
+    eg.addColorStop(1, 'transparent');
+    ctx.fillStyle = eg;
+    ctx.beginPath();
+    ctx.arc(0, 18, 20 + Math.sin(time*0.3)*5, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // Ship body
+  ctx.beginPath();
+  ctx.moveTo(0, -16);
+  ctx.lineTo(-8, 8);
+  ctx.lineTo(-4, 4);
+  ctx.lineTo(0, 8);
+  ctx.lineTo(4, 4);
+  ctx.lineTo(8, 8);
+  ctx.closePath();
+  const shipGrad = ctx.createLinearGradient(0, -16, 0, 8);
+  shipGrad.addColorStop(0, '#8df');
+  shipGrad.addColorStop(1, '#057');
+  ctx.fillStyle = shipGrad;
+  ctx.fill();
+  ctx.strokeStyle = '#0ff';
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+
+  // Cockpit
+  ctx.beginPath();
+  ctx.ellipse(0, -6, 3, 5, 0, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(0,255,255,0.6)';
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// ─── Planet Surface Drawing ───────────────────────────────────────────────
+function drawPlanetSurface() {
+  const s = planetSurface;
+  const camX = player.sx - W/2;
+  const camY = 0;
+
+  // Sky gradient
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
+  skyGrad.addColorStop(0, s.biome.sky);
+  skyGrad.addColorStop(0.7, s.biome.atm.replace('0.3', '0.15').replace('0.25','0.1'));
+  skyGrad.addColorStop(1, darken(s.biome.sky, -20));
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Sky stars
+  for (const st of s.skyStars) {
+    const sx2 = st.x - camX;
+    if (sx2 < -5 || sx2 > W+5) continue;
+    const sy2 = st.y * (H / s.H);
+    const tw = 0.5 + 0.5 * Math.sin(time * 0.05 + st.x * 0.1);
+    ctx.globalAlpha = st.bright * tw * 0.8;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(sx2, sy2, st.size, st.size);
+  }
+  ctx.globalAlpha = 1;
+
+  // Parent star (sun)
+  const sunX = 100;
+  const sunY = 80;
+  const sunGrad = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, 60);
+  sunGrad.addColorStop(0, '#fff');
+  sunGrad.addColorStop(0.3, '#ffe080');
+  sunGrad.addColorStop(1, 'transparent');
+  ctx.fillStyle = sunGrad;
+  ctx.beginPath();
+  ctx.arc(sunX, sunY, 60, 0, Math.PI*2);
+  ctx.fill();
+
+  // Draw terrain
+  const terrainOffsetY = H * 0.05;
+  ctx.beginPath();
+  ctx.moveTo(-10, H + 10);
+  for (const pt of s.terrain) {
+    const sx2 = pt.x - camX;
+    const sy2 = pt.y * (H / s.H) + terrainOffsetY;
+    ctx.lineTo(sx2, sy2);
+  }
+  ctx.lineTo(s.W - camX, H + 10);
+  ctx.closePath();
+  const terrainGrad = ctx.createLinearGradient(0, H*0.4, 0, H);
+  terrainGrad.addColorStop(0, s.biome.grassColor);
+  terrainGrad.addColorStop(0.3, s.biome.ground);
+  terrainGrad.addColorStop(1, darken(s.biome.ground, 40));
+  ctx.fillStyle = terrainGrad;
+  ctx.fill();
+  ctx.strokeStyle = lighten(s.biome.grassColor, 20);
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Draw rocks
+  for (const rock of s.rocks) {
+    const rx = rock.x - camX;
+    if (rx < -100 || rx > W+100) continue;
+    const ry = rock.y * (H/s.H) + terrainOffsetY;
+    ctx.beginPath();
+    ctx.ellipse(rx, ry, rock.size * 0.8, rock.size * 0.5, 0, Math.PI, 0);
+    ctx.fillStyle = lighten(rock.color, 10);
+    ctx.fill();
+  }
+
+  // Draw flora
+  for (const f of s.flora) {
+    const fx = f.x - camX;
+    if (fx < -100 || fx > W+100) continue;
+    const fy = f.y * (H/s.H) + terrainOffsetY;
+    drawFlora(f, fx, fy);
+  }
+
+  // Draw creatures
+  for (const c of s.creatures) {
+    c.x += c.vx;
+    c.legPhase += 0.08;
+    const ty = getTerrainY(s, c.x);
+    c.y = ty;
+    if (c.x < 0 || c.x > s.W) c.vx *= -1;
+    const cx2 = c.x - camX;
+    if (cx2 < -100 || cx2 > W+100) continue;
+    const cy2 = c.y * (H/s.H) + terrainOffsetY;
+    drawCreature(c, cx2, cy2);
+  }
+
+  // Player on surface
+  const px = W/2;
+  const py = player.sy * (H/s.H) + terrainOffsetY;
+  drawSurfacePlayer(px, py);
+
+  // Atmospheric overlay
+  const atmGrad = ctx.createLinearGradient(0, 0, 0, H*0.3);
+  atmGrad.addColorStop(0, s.biome.atm);
+  atmGrad.addColorStop(1, 'transparent');
+  ctx.fillStyle = atmGrad;
+  ctx.fillRect(0, 0, W, H*0.3);
+
+  // HUD info
+  ctx.font = '12px Courier New';
+  ctx.fillStyle = '#0ff';
+  ctx.textAlign = 'left';
+}
+
+function drawFlora(f, fx, fy) {
+  const s2 = f.size;
+  switch(f.type) {
+    case 0: // Tree
+      ctx.fillStyle = darken(f.color2, 20);
+      ctx.fillRect(fx - s2*0.08, fy - s2, s2*0.16, s2);
+      ctx.beginPath();
+      ctx.moveTo(fx, fy - s2*1.6);
+      ctx.lineTo(fx - s2*0.5, fy - s2*0.8);
+      ctx.lineTo(fx + s2*0.5, fy - s2*0.8);
+      ctx.closePath();
+      ctx.fillStyle = f.color;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(fx, fy - s2*2.0);
+      ctx.lineTo(fx - s2*0.35, fy - s2*1.3);
+      ctx.lineTo(fx + s2*0.35, fy - s2*1.3);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    case 1: // Crystal
+      for (let i = 0; i < 3; i++) {
+        const angle = i * Math.PI*2/3 + f.x*0.01;
+        const h = s2 * (0.6 + i*0.3);
+        ctx.beginPath();
+        ctx.moveTo(fx + Math.cos(angle)*s2*0.2, fy);
+        ctx.lineTo(fx + Math.cos(angle)*s2*0.05, fy - h);
+        ctx.lineTo(fx + Math.cos(angle+0.3)*s2*0.05, fy - h);
+        ctx.lineTo(fx + Math.cos(angle+0.15)*s2*0.2, fy);
+        ctx.closePath();
+        ctx.fillStyle = `${f.color}cc`;
+        ctx.fill();
+        ctx.strokeStyle = lighten(f.color, 60);
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+      }
+      break;
+    case 2: // Mushroom
+      ctx.fillStyle = darken(f.color2, 10);
+      ctx.fillRect(fx - s2*0.06, fy - s2*0.7, s2*0.12, s2*0.7);
+      ctx.beginPath();
+      ctx.ellipse(fx, fy - s2*0.7, s2*0.45, s2*0.35, 0, Math.PI, 0);
+      ctx.fillStyle = f.color;
+      ctx.fill();
+      for (let i = 0; i < 4; i++) {
+        ctx.beginPath();
+        ctx.arc(fx - s2*0.3 + i*s2*0.2, fy - s2*0.75, s2*0.05, 0, Math.PI*2);
+        ctx.fillStyle = '#fff8';
+        ctx.fill();
+      }
+      break;
+    case 3: // Alien plant
+      for (let i = 0; i < 5; i++) {
+        const angle = (i/5)*Math.PI*2;
+        const len = s2 * (0.5 + Math.sin(i*1.618)*0.3);
+        ctx.beginPath();
+        ctx.moveTo(fx, fy);
+        ctx.quadraticCurveTo(
+          fx + Math.cos(angle)*len*0.5,
+          fy - len*0.5,
+          fx + Math.cos(angle)*len*0.3,
+          fy - len
+        );
+        ctx.strokeStyle = f.color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(fx + Math.cos(angle)*len*0.3, fy - len, s2*0.1, 0, Math.PI*2);
+        ctx.fillStyle = lighten(f.color, 40);
+        ctx.fill();
+      }
+      break;
+  }
+}
+
+function drawCreature(c, cx2, cy2) {
+  const s2 = c.size;
+  ctx.save();
+  ctx.translate(cx2, cy2);
+  if (c.vx > 0) ctx.scale(-1, 1);
+
+  switch(c.type) {
+    case 0: // Quadruped
+      // Body
+      ctx.fillStyle = c.color;
+      ctx.beginPath();
+      ctx.ellipse(-s2*0.1, -s2*0.4, s2*0.4, s2*0.2, 0, 0, Math.PI*2);
+      ctx.fill();
+      // Head
+      ctx.beginPath();
+      ctx.arc(-s2*0.45, -s2*0.45, s2*0.2, 0, Math.PI*2);
+      ctx.fill();
+      // Eye
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(-s2*0.5, -s2*0.5, s2*0.07, 0, Math.PI*2);
+      ctx.fill();
+      // Legs
+      for (let i = 0; i < 4; i++) {
+        const phase = c.legPhase + i * Math.PI/2;
+        const lx = -s2*0.3 + i*s2*0.2;
+        const ly = -s2*0.25;
+        const lendY = Math.sin(phase) * s2*0.15;
+        ctx.beginPath();
+        ctx.moveTo(lx, ly);
+        ctx.lineTo(lx, lendY);
+        ctx.strokeStyle = c.color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      break;
+    case 1: // Floater
+      const bob = Math.sin(time*0.05 + c.x*0.01)*5;
+      ctx.save();
+      ctx.translate(0, bob - s2*0.5);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, s2*0.5, s2*0.35, 0, 0, Math.PI*2);
+      ctx.fillStyle = c.color;
+      ctx.fill();
+      // Tentacles
+      for (let i = 0; i < 5; i++) {
+        const tx = -s2*0.4 + i*s2*0.2;
+        ctx.beginPath();
+        ctx.moveTo(tx, s2*0.3);
+        ctx.quadraticCurveTo(tx + Math.sin(c.legPhase + i)*8, s2*0.6, tx, s2*0.8);
+        ctx.strokeStyle = c.color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      ctx.restore();
+      break;
+    case 2: // Biped
+      ctx.fillStyle = c.color;
+      ctx.beginPath();
+      ctx.ellipse(0, -s2*0.5, s2*0.2, s2*0.35, 0, 0, Math.PI*2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(0, -s2*0.9, s2*0.18, 0, Math.PI*2);
+      ctx.fill();
+      const ph = c.legPhase;
+      ctx.beginPath();
+      ctx.moveTo(-s2*0.05, -s2*0.2);
+      ctx.lineTo(-s2*0.15, s2*0.15 + Math.sin(ph)*s2*0.1);
+      ctx.strokeStyle = c.color;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(s2*0.05, -s2*0.2);
+      ctx.lineTo(s2*0.15, s2*0.15 + Math.sin(ph+Math.PI)*s2*0.1);
+      ctx.stroke();
+      break;
+  }
+  ctx.restore();
+}
+
+function drawSurfacePlayer(px, py) {
+  ctx.save();
+  ctx.translate(px, py);
+  // Jetpack glow when jumping
+  if (!player.grounded) {
+    const eg = ctx.createRadialGradient(0, 10, 0, 0, 10, 15);
+    eg.addColorStop(0, 'rgba(0,200,255,0.8)');
+    eg.addColorStop(1, 'transparent');
+    ctx.fillStyle = eg;
+    ctx.beginPath();
+    ctx.arc(0, 10, 15, 0, Math.PI*2);
+    ctx.fill();
+  }
+  // Body
+  ctx.fillStyle = '#4af';
+  ctx.beginPath();
+  ctx.roundRect(-8, -25, 16, 20, 4);
+  ctx.fill();
+  // Helmet
+  ctx.beginPath();
+  ctx.arc(0, -25, 10, 0, Math.PI*2);
+  ctx.fillStyle = '#2af';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(0, -25, 7, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(0,200,255,0.5)';
+  ctx.fill();
+  // Legs
+  const run = keys['ArrowLeft']||keys['ArrowRight']||keys['a']||keys['d']||keys['A']||keys['D'];
+  const legSwing = run ? Math.sin(time*0.2)*10 : 0;
+  ctx.strokeStyle = '#4af';
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-4, -5);
+  ctx.lineTo(-4 + legSwing, 10);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(4, -5);
+  ctx.lineTo(4 - legSwing, 10);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ─── Color Helpers ────────────────────────────────────────────────────────
+function lighten(hex, amount) {
+  try {
+    let r = parseInt(hex.slice(1,3),16) + amount;
+    let g = parseInt(hex.slice(3,5),16) + amount;
+    let b = parseInt(hex.slice(5,7),16) + amount;
+    r = Math.min(255,Math.max(0,r));
+    g = Math.min(255,Math.max(0,g));
+    b = Math.min(255,Math.max(0,b));
+    return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`;
+  } catch(e) { return hex; }
+}
+function darken(hex, amount) { return lighten(hex, -amount); }
+
+// ─── Input ────────────────────────────────────────────────────────────────
+window.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key === 'e' || e.key === 'E') handleInteract();
+  if (e.key === ' ') e.preventDefault();
+});
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+window.addEventListener('wheel', e => {
+  if (gameState === STATE.SPACE) {
+    const factor = e.deltaY > 0 ? 0.9 : 1.1;
+    cam.zoom = Math.max(0.1, Math.min(5, cam.zoom * factor));
+  }
+  e.preventDefault();
+}, { passive: false });
+
+function handleInteract() {
+  if (gameState === STATE.TRANSITION) return;
+  if (gameState === STATE.SPACE && nearbyPlanet) {
+    enterPlanet(nearbyPlanet);
+  } else if (gameState === STATE.PLANET) {
+    exitPlanet();
+  }
+}
+
+// ─── Game Logic ──────────────────────────────────────────────────────────
+function updateSpace(dt) {
+  const boost = (keys['Shift'] || keys['shift']) ? 3 : 1;
+  const accel = 0.15 * boost;
+  const maxSpeed = 12 * boost;
+
+  if (keys['ArrowLeft'] || keys['a'] || keys['A']) player.angle -= 0.05;
+  if (keys['ArrowRight'] || keys['d'] || keys['D']) player.angle += 0.05;
+
+  if (keys['ArrowUp'] || keys['w'] || keys['W']) {
+    player.vx += Math.cos(player.angle) * accel;
+    player.vy += Math.sin(player.angle) * accel;
+    player.fuel = Math.max(0, player.fuel - 0.02 * boost);
+  }
+  if (keys['ArrowDown'] || keys['s'] || keys['S']) {
+    player.vx -= Math.cos(player.angle) * accel * 0.5;
+    player.vy -= Math.sin(player.angle) * accel * 0.5;
+  }
+
+  // Drag
+  player.vx *= 0.98;
+  player.vy *= 0.98;
+  const spd = Math.hypot(player.vx, player.vy);
+  if (spd > maxSpeed) {
+    player.vx = player.vx/spd*maxSpeed;
+    player.vy = player.vy/spd*maxSpeed;
+  }
+
+  player.x += player.vx;
+  player.y += player.vy;
+  player.speed = Math.round(spd * 10) / 10;
+
+  // Black hole gravity
+  const x0 = cam.x - W/(2*cam.zoom);
+  const y0 = cam.y - H/(2*cam.zoom);
+  const visW = W/cam.zoom, visH = H/cam.zoom;
+  const sx0 = Math.floor((x0)/SECTOR_SIZE)-1, sy0 = Math.floor((y0)/SECTOR_SIZE)-1;
+  const sx1 = Math.floor((x0+visW)/SECTOR_SIZE)+1, sy1 = Math.floor((y0+visH)/SECTOR_SIZE)+1;
+  for (let sx2 = sx0; sx2 <= sx1; sx2++) {
+    for (let sy2 = sy0; sy2 <= sy1; sy2++) {
+      for (const obj of getSector(sx2, sy2)) {
+        if (obj.type === 'blackhole') {
+          const dx = obj.x - player.x, dy = obj.y - player.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < obj.radius * 15) {
+            const force = 5000 / (dist * dist);
+            player.vx += dx/dist * force;
+            player.vy += dy/dist * force;
+            if (dist < obj.radius * 1.5) cameraShake = 20;
+          }
+        }
+      }
+    }
+  }
+
+  cam.x += (player.x - cam.x) * 0.1;
+  cam.y += (player.y - cam.y) * 0.1;
+
+  // Find nearby planet
+  nearbyPlanet = null;
+  for (let sx2 = sx0-1; sx2 <= sx1+1; sx2++) {
+    for (let sy2 = sy0-1; sy2 <= sy1+1; sy2++) {
+      for (const obj of getSector(sx2, sy2)) {
+        if (obj.type === 'planet') {
+          const dist = Math.hypot(player.x - obj.x, player.y - obj.y);
+          if (dist < obj.radius * 1.8) {
+            nearbyPlanet = obj;
+            discoveredPlanets.add(obj.seed);
+          }
+        }
+      }
+    }
+  }
+
+  // Fuel regen
+  if (player.fuel < 100) player.fuel = Math.min(100, player.fuel + 0.01);
+}
+
+function updatePlanet(dt) {
+  const s = planetSurface;
+  const moveSpeed = 3;
+
+  if (keys['ArrowLeft'] || keys['a'] || keys['A']) player.svx = -moveSpeed;
+  else if (keys['ArrowRight'] || keys['d'] || keys['D']) player.svx = moveSpeed;
+  else player.svx *= 0.8;
+
+  // Jump
+  if ((keys['ArrowUp'] || keys['w'] || keys['W'] || keys[' ']) && player.grounded) {
+    player.svy = -7;
+    player.grounded = false;
+  }
+
+  player.svy += s.gravity;
+  player.sx += player.svx;
+  player.sy += player.svy;
+
+  // Clamp to world
+  player.sx = Math.max(10, Math.min(s.W - 10, player.sx));
+
+  // Terrain collision
+  const groundY = getTerrainY(s, player.sx);
+  if (player.sy >= groundY - 30) {
+    player.sy = groundY - 30;
+    player.svy = 0;
+    player.grounded = true;
+  } else {
+    player.grounded = false;
+  }
+
+  s.time++;
+}
+
+// ─── Transitions ──────────────────────────────────────────────────────────
+function enterPlanet(planet) {
+  if (gameState !== STATE.SPACE) return;
+  gameState = STATE.TRANSITION;
+  targetPlanet = planet;
+  const td = document.getElementById('transition');
+  td.style.transition = 'opacity 0.8s';
+  td.style.opacity = 1;
+
+  setTimeout(() => {
+    planetSurface = generatePlanetSurface(planet);
+    player.sx = planetSurface.W / 2;
+    player.sy = planetSurface.groundY - 60;
+    player.svx = 0;
+    player.svy = 0;
+    player.grounded = false;
+    gameState = STATE.PLANET;
+    document.getElementById('hud-bc').style.display = 'block';
+    document.getElementById('planet-info').textContent = `▶ ${planet.name} — ${planet.biome.name}`;
+    td.style.transition = 'opacity 0.8s';
+    td.style.opacity = 0;
+  }, 800);
+}
+
+function exitPlanet() {
+  if (gameState !== STATE.PLANET) return;
+  gameState = STATE.TRANSITION;
+  const td = document.getElementById('transition');
+  td.style.transition = 'opacity 0.6s';
+  td.style.opacity = 1;
+
+  setTimeout(() => {
+    gameState = STATE.SPACE;
+    document.getElementById('hud-bc').style.display = 'none';
+    cam.zoom = 1;
+    td.style.transition = 'opacity 0.6s';
+    td.style.opacity = 0;
+  }, 600);
+}
+
+// ─── HUD Updates ──────────────────────────────────────────────────────────
+function updateHUD() {
+  document.getElementById('coords').textContent =
+    `X: ${Math.round(player.x/100)} &nbsp; Y: ${Math.round(player.y/100)}`;
+  document.getElementById('speed').textContent =
+    `${player.speed.toFixed(1)} AU/s`;
+  document.getElementById('bar-fuel').style.width = player.fuel + '%';
+  document.getElementById('bar-shield').style.width = player.shield + '%';
+  document.getElementById('discovered').textContent = `${discoveredPlanets.size} 行星`;
+
+  // Nearby objects
+  let nearbyText = '無';
+  if (nearbyPlanet) {
+    nearbyText = `${nearbyPlanet.name} (${nearbyPlanet.biome.name})`;
+  }
+  document.getElementById('nearby').textContent = nearbyText;
+
+  const statusEl = document.getElementById('status');
+  if (gameState === STATE.PLANET) {
+    statusEl.textContent = `地表探索`;
+    statusEl.style.color = '#fa0';
+  } else {
+    statusEl.textContent = '太空飛行';
+    statusEl.style.color = '#0f8';
+  }
+
+  // Prompt
+  const prompt = document.getElementById('prompt');
+  if (gameState === STATE.SPACE && nearbyPlanet) {
+    prompt.style.display = 'block';
+    prompt.textContent = `按 E 降落至 ${nearbyPlanet.name}`;
+  } else if (gameState === STATE.PLANET) {
+    prompt.style.display = 'block';
+    prompt.textContent = '按 E 返回太空';
+  } else {
+    prompt.style.display = 'none';
+  }
+}
+
+function drawMinimap() {
+  const mc = miniCanvas;
+  mctx.clearRect(0, 0, mc.width, mc.height);
+  mctx.fillStyle = 'rgba(0,5,15,0.9)';
+  mctx.fillRect(0, 0, mc.width, mc.height);
+
+  const cx = mc.width/2, cy = mc.height/2;
+  const scale = 0.004;
+
+  if (gameState === STATE.SPACE) {
+    // Draw nearby sectors on minimap
+    const range = 10000;
+    const x0 = player.x - W/(2*cam.zoom);
+    const y0 = player.y - H/(2*cam.zoom);
+    const sx0 = Math.floor((player.x-range)/SECTOR_SIZE)-1;
+    const sy0 = Math.floor((player.y-range)/SECTOR_SIZE)-1;
+    const sx1 = Math.floor((player.x+range)/SECTOR_SIZE)+1;
+    const sy1 = Math.floor((player.y+range)/SECTOR_SIZE)+1;
+
+    for (let sx = sx0; sx <= sx1; sx++) {
+      for (let sy = sy0; sy <= sy1; sy++) {
+        for (const obj of getSector(sx, sy)) {
+          const mx = cx + (obj.x - player.x) * scale;
+          const my = cy + (obj.y - player.y) * scale;
+          if (mx < 5 || mx > mc.width-5 || my < 5 || my > mc.height-5) continue;
+          if (obj.type === 'planet') {
+            mctx.beginPath();
+            mctx.arc(mx, my, Math.max(2, obj.radius*scale*8), 0, Math.PI*2);
+            mctx.fillStyle = discoveredPlanets.has(obj.seed) ? '#fa0' : obj.biome.color;
+            mctx.fill();
+          } else if (obj.type === 'blackhole') {
+            mctx.beginPath();
+            mctx.arc(mx, my, 4, 0, Math.PI*2);
+            mctx.fillStyle = '#f80';
+            mctx.fill();
+          }
+        }
+      }
+    }
+
+    // Player
+    mctx.fillStyle = '#0ff';
+    mctx.beginPath();
+    mctx.arc(cx, cy, 3, 0, Math.PI*2);
+    mctx.fill();
+  } else if (gameState === STATE.PLANET) {
+    // Planet surface minimap
+    const s = planetSurface;
+    mctx.fillStyle = s.biome.ground;
+    mctx.fillRect(5, cy, mc.width-10, cy-5);
+    const px = 5 + (player.sx / s.W) * (mc.width-10);
+    mctx.fillStyle = '#0ff';
+    mctx.fillRect(px-2, cy-5, 4, 8);
+  }
+
+  // Minimap border glow
+  mctx.beginPath();
+  mctx.arc(cx, cy, cx-1, 0, Math.PI*2);
+  mctx.strokeStyle = 'rgba(0,255,200,0.3)';
+  mctx.lineWidth = 1;
+  mctx.stroke();
+}
+
+// ─── Main Loop ────────────────────────────────────────────────────────────
+let lastTime = 0;
+function loop(ts) {
+  const dt = (ts - lastTime) / 16.67;
+  lastTime = ts;
+  time++;
+
+  if (cameraShake > 0) {
+    cameraShake *= 0.9;
+    ctx.save();
+    ctx.translate((Math.random()-0.5)*cameraShake, (Math.random()-0.5)*cameraShake);
+  }
+
+  if (gameState === STATE.SPACE || gameState === STATE.TRANSITION) {
+    if (gameState === STATE.SPACE) updateSpace(dt);
+    drawSpace();
+  } else if (gameState === STATE.PLANET) {
+    updatePlanet(dt);
+    drawPlanetSurface();
+  }
+
+  if (cameraShake > 0) ctx.restore();
+
+  updateHUD();
+  drawMinimap();
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener('resize', () => {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+});
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
